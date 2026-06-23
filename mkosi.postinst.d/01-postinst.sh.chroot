@@ -1,0 +1,80 @@
+#!/bin/bash
+# set -e
+
+# Static values
+DB_NAME=nextcloud
+DB_USER=admin
+NC_USER=unonweb
+
+# Initial values
+DB_INIT_PW=initpw
+NC_INIT_PW=initpw
+
+# Nextcloud: download
+echo "=== Downloading and Extracting Nextcloud ==="
+
+cd /tmp
+curl --remote-name https://download.nextcloud.com/server/releases/latest.zip
+unzip latest.zip
+mv nextcloud /var/www/
+chown -R www-data:www-data /var/www/nextcloud
+chmod -R 755 /var/www/nextcloud
+
+# Nextcloud: install
+echo "=== Installing Nextcloud ==="
+
+cd /var/www/nextcloud/
+sudo -E -u www-data php occ maintenance:install \
+--database='mysql' --database-name="${DB_NAME}" \
+--database-user="${DB_USER}" --database-pass="${DB_INIT_PW}" \
+--admin-user="${NC_USER}" --admin-pass="${NC_INIT_PW}"
+
+echo "=== Setting up Apache ==="
+
+# Apache: sites
+a2dissite 000-default
+a2ensite nextcloud.conf
+# Apache: required modules
+a2enmod rewrite
+# Apache: recommended modules
+a2enmod dir
+a2enmod env
+a2enmod headers
+a2enmod mime
+
+# Apache: setup php-fpm
+a2dismod php8.4
+a2enconf php8.4-fpm
+# Necessary for PHP-FPM integration:
+#a2enmod proxy_fcgi # Route PHP requests
+#a2enmod setenvif # Configure PHP-FPM routing
+
+echo "=== Setting up MariaDB ==="
+
+# Start temporary MariaDB instance to configure the DB during build
+mariadbd-safe & PID=$!
+
+# Wait for MariaDB to start up
+until mariadb-admin ping --silent; do
+    sleep 1
+done
+
+# Create Database and User
+mariadb -e "CREATE DATABASE ${DB_NAME};"
+mariadb -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_INIT_PW}';"
+mariadb -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+mariadb -e "FLUSH PRIVILEGES;"
+
+# Shutdown temporary MariaDB
+kill $PID
+wait $PID
+
+echo "=== Setting up Services ==="
+
+systemctl enable apache2.service
+systemctl enable mariadb.service
+systemctl enable systemd-networkd.service
+systemctl enable systemd-resolved.service
+systemctl restart php8.3-fpm
+systemctl restart apache2.service
+systemctl enable nextcloudcron.timer

@@ -1,0 +1,11 @@
+# Replace the user www-data with the user of your http server 
+# Replace /var/www/nextcloud/cron.php with the location of cron.php in your nextcloud directory
+
+[Unit]
+Description=Nextcloud cron.php job
+
+[Service]
+User=www-data
+ExecCondition=php -f /var/www/nextcloud/occ status -e
+ExecStart=/usr/bin/php -f /var/www/nextcloud/cron.php
+KillMode=process
